@@ -62,8 +62,8 @@ def get_data_from_postgres() -> None:
     _LOG.info(df.head())
 
     s3_hook = S3Hook("s3_connection")
-    session = s3_hook.get_session("ru-central1")  # ru-central1
-    resource = session.resource("s3")
+    session = s3_hook.get_session(s3_hook.conn_config.region_name)
+    resource = session.resource("s3", endpoint_url=s3_hook.conn_config.endpoint_url)
 
     pickle_byte_obj = pickle.dumps(df)
     resource.Object(BUCKET, DATA_PATH).put(Body=pickle_byte_obj)
@@ -86,15 +86,13 @@ def prepare_data() -> None:
     X_train_fitted = scaler.fit_transform(X_train)
     X_test_fitted = scaler.fit_transform(X_test)
 
-    session = s3_hook.get_session("ru-central1")
-    resource = session.resource("s3")
+    s3_hook = S3Hook("s3_connection")
+    session = s3_hook.get_session(s3_hook.conn_config.region_name)
+    resource = session.resource("s3", endpoint_url=s3_hook.conn_config.endpoint_url)
 
     for name, data in zip(
         ["X_train", "X_test", "y_train", "y_test"],
-        X_train_fitted,
-        X_test_fitted,
-        y_train,
-        y_test,
+        [X_train_fitted, X_test_fitted, y_train, y_test],
     ):
         pickle_byte_obj = pickle.dumps(data)
         resource.Object(BUCKET, f"dataset/{name}.pkl").put(Body=pickle_byte_obj)
@@ -104,6 +102,9 @@ def prepare_data() -> None:
 
 def train_model() -> None:
     s3_hook = S3Hook("s3_connection")
+    session = s3_hook.get_session(s3_hook.conn_config.region_name)
+    resource = session.resource("s3", endpoint_url=s3_hook.conn_config.endpoint_url)
+
     data = {}
 
     for name in ["X_train", "X_test", "y_train", "y_test"]:
@@ -121,8 +122,7 @@ def train_model() -> None:
     }
 
     date = datetime.now().strftime("%Y_%m_%d_%H")
-    session = s3_hook.get_session("ru-central1")
-    resource = session.resource("s3")
+
     json_byte_obj = json.dumps(result)
     resource.Object(BUCKET, f"results/{date}.json").put(Body=json_byte_obj)
 
@@ -176,28 +176,28 @@ with DAG(
 ) as dag:
     task_init = PythonOperator(task_id="init", python_callable=init)
 
-    # task_get_data = PythonOperator(
-    #     task_id="read_data", python_callable=get_data_from_postgres
-    # )
-    #
-    # task_prepare_data = PythonOperator(task_id="prepare", python_callable=prepare_data)
-    #
-    # task_train_model = PythonOperator(
-    #     task_id="train_model", python_callable=train_model
-    # )
-    #
-    # task_save_results = PythonOperator(
-    #     task_id="save_results", python_callable=save_results
-    # )
-    #
-    # (
-    #     task_init
-    #     >> task_get_data
-    #     >> task_prepare_data
-    #     >> task_train_model
-    #     >> task_save_results
-    # )
+    task_get_data = PythonOperator(
+        task_id="read_data", python_callable=get_data_from_postgres
+    )
 
-    task_all_in_one = PythonOperator(task_id="all_in_one", python_callable=all_in_one)
+    task_prepare_data = PythonOperator(task_id="prepare", python_callable=prepare_data)
 
-    task_init >> task_all_in_one
+    task_train_model = PythonOperator(
+        task_id="train_model", python_callable=train_model
+    )
+
+    task_save_results = PythonOperator(
+        task_id="save_results", python_callable=save_results
+    )
+
+    (
+        task_init
+        >> task_get_data
+        >> task_prepare_data
+        >> task_train_model
+        >> task_save_results
+    )
+
+    # task_all_in_one = PythonOperator(task_id="all_in_one", python_callable=all_in_one)
+    #
+    # task_init >> task_all_in_one
